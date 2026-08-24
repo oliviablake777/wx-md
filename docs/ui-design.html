@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>wx-md · 微信公众号 Markdown 渲染组件 — UI 原型</title>
+<style>
+  /* ============================================================
+     整体外壳（玻璃拟态 + 彩色氛围光斑）
+  ============================================================ */
+  :root {
+    --bg: #0d0a1f;
+    --accent: #8b5cf6;
+    --glass: rgba(255, 255, 255, 0.07);
+    --glass-border: rgba(255, 255, 255, 0.13);
+    --text-soft: rgba(255, 255, 255, 0.72);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: #fff;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+  /* 背景氛围光斑 */
+  .blobs { position: fixed; inset: 0; z-index: -1; overflow: hidden; }
+  .blobs span {
+    position: absolute; border-radius: 50%; filter: blur(90px); opacity: 0.55;
+    animation: drift 16s ease-in-out infinite alternate;
+  }
+  .blobs .b1 { width: 420px; height: 420px; background: #7c4dff; top: -120px; left: -80px; }
+  .blobs .b2 { width: 380px; height: 380px; background: #0b5fd9; top: 10%; right: -100px; animation-delay: -4s; }
+  .blobs .b3 { width: 360px; height: 360px; background: #d9651f; bottom: -120px; left: 30%; animation-delay: -8s; }
+  @keyframes drift { from { transform: translate(0, 0) scale(1); } to { transform: translate(40px, 30px) scale(1.12); } }
+
+  .app-header { text-align: center; padding: 34px 20px 6px; }
+  .app-header h1 {
+    font-size: 26px; font-weight: 700; letter-spacing: 0.5px;
+    background: linear-gradient(90deg, #c4b5fd, #7aa2ff, #ffc9a3);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .app-header p { margin-top: 8px; color: var(--text-soft); font-size: 13px; }
+  .status-chips { display: flex; justify-content: center; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+  .chip {
+    font-size: 12px; padding: 6px 12px; border-radius: 999px;
+    background: var(--glass); border: 1px solid var(--glass-border); color: var(--text-soft);
+    backdrop-filter: blur(10px);
+  }
+  .chip b { color: #fff; font-weight: 600; }
+
+  /* ============================================================
+     舞台 / 设备框架
+  ============================================================ */
+  .stage { display: flex; justify-content: center; padding: 22px 16px 60px; }
+  .frame {
+    display: flex; flex-direction: column;
+    height: min(70vh, 720px);
+    background: #10101c;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.04);
+    overflow: hidden;
+    transition: width 0.45s ease, border-radius 0.45s ease, border-width 0.45s ease;
+  }
+  /* 手机模式：iPhone 风格 */
+  .frame.mobile {
+    width: 392px;
+    border-radius: 46px;
+    border: 6px solid #1d1d2b;
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6), inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  }
+  /* 桌面模式：宽屏居中卡片 */
+  .frame.desktop { width: min(880px, 94vw); border-radius: 24px; }
+
+  .phone-status { display: none; }
+  .frame.mobile .phone-status {
+    display: flex; align-items: center; justify-content: center;
+    height: 46px; position: relative; flex-shrink: 0;
+    color: #d9dcff; font-size: 12px; font-weight: 600;
+  }
+  .phone-status .notch {
+    position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+    width: 112px; height: 27px; background: #000; border-radius: 18px; z-index: 2;
+  }
+  .phone-status .time { position: absolute; left: 20px; top: 50%; transform: translateY(-50%); }
+  .phone-status .icons { position: absolute; right: 18px; top: 50%; transform: translateY(-50%); display: flex; gap: 6px; font-size: 11px; }
+
+  .frame-body { flex: 1; overflow-y: auto; position: relative; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.18) transparent; }
+  .frame-body::-webkit-scrollbar { width: 6px; }
+  .frame-body::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.16); border-radius: 4px; }
+
+  /* ============================================================
+     顶部设置区域（悬浮固定、居中、图标按钮、玻璃拟态）
+  ============================================================ */
+  .settings-bar {
+    position: sticky; top: 12px; z-index: 20;
+    margin: 12px 14px 0;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    padding: 8px 10px;
+    border-radius: 16px;
+    background: rgba(18, 18, 32, 0.62);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  }
+  .btn {
+    width: 38px; height: 38px; border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.06);
+    color: #fff; font-size: 17px; line-height: 1;
+    display: inline-flex; align-items: center; justify-content: center;
+    cursor: pointer; transition: all 0.2s ease; flex-shrink: 0;
+  }
+  .btn:hover { background: rgba(255, 255, 255, 0.14); transform: translateY(-1px); }
+  .btn:active { transform: translateY(0) scale(0.96); }
+  .btn.active {
+    background: var(--accent);
+    border-color: transparent;
+    box-shadow: 0 4px 16px color-mix(in srgb, var(--accent) 55%, transparent);
+  }
+  /* 主题选择按钮：图标 + 「选择主题」文字 */
+  .theme-btn { width: auto; padding: 0 12px; gap: 8px; font-size: 15px; position: relative; }
+  .theme-label { font-size: 13px; color: rgba(255, 255, 255, 0.9); white-space: nowrap; }
+  .theme-caret { font-size: 10px; color: rgba(255, 255, 255, 0.6); transition: transform 0.2s ease; }
+  .theme-btn.open .theme-caret { transform: rotate(180deg); }
+  .divider { width: 1px; height: 22px; background: rgba(255, 255, 255, 0.14); margin: 0 3px; flex-shrink: 0; }
+
+  /* 主题下拉菜单 */
+  .theme-menu {
+    position: absolute; top: calc(100% + 10px); left: 50%;
+    transform: translateX(-50%) translateY(-6px);
+    min-width: 228px; padding: 7px;
+    background: rgba(24, 24, 42, 0.94);
+    border: 1px solid rgba(255, 255, 255, 0.13);
+    border-radius: 16px;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+    opacity: 0; visibility: hidden;
+    transition: opacity 0.22s ease, transform 0.22s ease, visibility 0.22s;
+    z-index: 40;
+  }
+  .theme-menu.open { opacity: 1; visibility: visible; transform: translateX(-50%) translateY(0); }
+  .menu-title { font-size: 11px; color: rgba(255, 255, 255, 0.45); padding: 6px 10px 8px; letter-spacing: 0.08em; }
+  .menu-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 11px; border-radius: 10px; cursor: pointer;
+    color: rgba(255, 255, 255, 0.88); font-size: 13.5px;
+    transition: background 0.15s ease;
+  }
+  .menu-item:hover { background: rgba(255, 255, 255, 0.08); }
+  .menu-dot { width: 16px; height: 16px; border-radius: 50%; border: 1px solid rgba(255, 255, 255, 0.25); box-shadow: inset 0 0 0 2px rgba(0,0,0,.15); flex-shrink: 0; }
+  .menu-check { margin-left: auto; color: var(--accent); font-size: 13px; opacity: 0; transition: opacity 0.15s; }
+  .menu-item.current .menu-check { opacity: 1; }
+
+  /* ============================================================
+     文章预览区（主题变量化，随主题整体变化）
+  ============================================================ */
+  .article { padding: 34px 30px 52px; transition: background 0.45s ease, color 0.45s ease; }
+  .article, .article * { box-sizing: border-box; }
+  .article * { transition: background-color 0.45s ease, color 0.45s ease, border-color 0.45s ease; }
+  .article h1, .article h2, .article h3, .article h4, .article h5, .article h6 {
+    font-family: var(--heading-font);
+    color: var(--heading);
+    font-weight: 700; line-height: 1.35;
+    margin: 1.15em 0 0.55em;
+  }
+  .article h1 { font-size: var(--h1); padding-bottom: 0.28em; border-bottom: 2px solid var(--heading-line); }
+  .article h2, .article h3, .article h4, .article h5, .article h6 {
+    border-left: 4px solid var(--heading-bar);
+    padding-left: 0.55em;
+  }
+  .article h2 { font-size: var(--h2); padding-bottom: 0.22em; border-bottom: 1px solid var(--heading-line); }
+  .article h3 { font-size: var(--h3); }
+  .article h4 { font-size: var(--h4); }
+  .article h5 { font-size: var(--h5); }
+  .article h6 { font-size: var(--h6); color: var(--text-weak); }
+  .article p { margin: 0.9em 0; line-height: 1.75; }
+  .article strong { color: var(--strong); font-weight: 650; }
+  .article em { color: var(--em); font-style: italic; }
+  .article a {
+    color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: 3px; text-decoration-thickness: 1px;
+  }
+  .article a:hover { color: var(--link-hover); text-decoration-thickness: 2px; }
+  .article ul, .article ol { padding-left: 1.55em; margin: 0.9em 0; }
+  .article li { margin: 0.38em 0; line-height: 1.7; }
+  .article ul li::marker { color: var(--marker); }
+  .article ol li::marker { color: var(--marker); font-weight: 700; }
+  .article blockquote {
+    background: var(--quote-bg);
+    border-left: 4px solid var(--quote-border);
+    color: var(--quote-color);
+    padding: 12px 16px;
+    border-radius: 0 12px 12px 0;
+    margin: 1.1em 0;
+  }
+  .article blockquote p { margin: 0.4em 0; }
+  .article :not(pre) > code {
+    background: var(--inline-code-bg);
+    color: var(--inline-code-color);
+    padding: 0.14em 0.4em;
+    border-radius: 6px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.88em;
+  }
+  .article hr { border: none; border-top: 1px solid var(--hr); margin: 2em 0; }
+  .article table { width: 100%; border-collapse: collapse; margin: 1.2em 0; font-size: 0.94em; }
+  .article th {
+    background: var(--table-head-bg); color: var(--table-head-color);
+    font-weight: 600; text-align: left; padding: 9px 12px; border: 1px solid var(--table-border);
+  }
+  .article td { padding: 9px 12px; border: 1px solid var(--table-border); }
+
+  /* ---- 代码块：macOS 风格容器 + GitHub Dark 高亮 ---- */
+  .codeblock {
+    background: #0d1117; border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px; margin: 1.2em 0; overflow: hidden;
+    transition: none !important;
+  }
+  .code-head {
+    position: relative; display: flex; align-items: center; gap: 8px;
+    padding: 10px 14px;
+    background: rgba(255, 255, 255, 0.045);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+  .code-head .dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+  .dot-r { background: #ff5f57; } .dot-y { background: #febc2e; } .dot-g { background: #28c840; }
+  .code-lang {
+    position: absolute; left: 50%; transform: translateX(-50%);
+    font-size: 11px; color: #8b949e; letter-spacing: 0.07em; text-transform: uppercase;
+  }
+  .code-body {
+    display: block; padding: 14px 16px; overflow-x: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px; line-height: 1.65; color: #c9d1d9;
+  }
+  .tk-kw { color: #ff7b72; } .tk-str { color: #a5d6ff; } .tk-com { color: #8b949e; font-style: italic; }
+  .tk-num { color: #79c0ff; } .tk-fn { color: #d2a8ff; }
+
+  /* ============================================================
+     主题 Token（预览与复制同源）
+  ============================================================ */
+  body[data-theme="classic"] { --accent: #576b95; }
+  body[data-theme="forest"]  { --accent: #2e9e5b; }
+  body[data-theme="dark"]    { --accent: #7aa2ff; }
+  body[data-theme="tech"]    { --accent: #0b5fd9; }
+  body[data-theme="retro"]   { --accent: #d9651f; }
+
+  .article.theme-classic {
+    --article-bg: #ffffff; --text: #3f3f3f; --text-weak: #666666;
+    --heading: #1f1f1f; --strong: #1f1f1f; --em: #666666;
+    --accent: #576b95; --link-hover: #334a66;
+    --quote-bg: #f7f7f7; --quote-border: #dfe2e5; --quote-color: #666666;
+    --inline-code-bg: #f4f4f5; --inline-code-color: #c0341d;
+    --hr: #e8e8e8; --marker: #576b95; --heading-line: #ececec; --heading-bar: #576b95;
+    --table-border: #e5e7eb; --table-head-bg: #f6f7f8; --table-head-color: #444444;
+    --heading-font: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    --h1: 26px; --h2: 22px; --h3: 19px; --h4: 17px; --h5: 16px; --h6: 15px;
+    background: var(--article-bg); color: var(--text);
+  }
+  .article.theme-forest {
+    --article-bg: #f5faf6; --text: #2f3d34; --text-weak: #6d8577;
+    --heading: #1e7a44; --strong: #1e7a44; --em: #3a9d62;
+    --accent: #2e9e5b; --link-hover: #1f7a45;
+    --quote-bg: #e9f5ee; --quote-border: #7cc7a0; --quote-color: #4d7a60;
+    --inline-code-bg: #e3f3e9; --inline-code-color: #1e7a44;
+    --hr: #dceade; --marker: #2e9e5b; --heading-line: #d5e8da; --heading-bar: #2e9e5b;
+    --table-border: #d5e8da; --table-head-bg: #eaf5ee; --table-head-color: #1e7a44;
+    --heading-font: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    --h1: 27px; --h2: 22px; --h3: 19px; --h4: 17px; --h5: 16px; --h6: 15px;
+    background: var(--article-bg); color: var(--text);
+  }
+  .article.theme-dark {
+    --article-bg: #12121f; --text: #d6d6e4; --text-weak: #9a9ab2;
+    --heading: #ffffff; --strong: #ffffff; --em: #a8a8ff;
+    --accent: #7aa2ff; --link-hover: #a8c0ff;
+    --quote-bg: #1b1b2e; --quote-border: #45456b; --quote-color: #a3a3c2;
+    --inline-code-bg: #23233c; --inline-code-color: #f2a97a;
+    --hr: #33334d; --marker: #7aa2ff; --heading-line: #2c2c45; --heading-bar: #7aa2ff;
+    --table-border: #33334d; --table-head-bg: #1c1c30; --table-head-color: #c9c9e0;
+    --heading-font: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    --h1: 28px; --h2: 23px; --h3: 20px; --h4: 18px; --h5: 16px; --h6: 15px;
+    background: var(--article-bg); color: var(--text);
+  }
+  .article.theme-tech {
+    --article-bg: #f4f9ff; --text: #233044; --text-weak: #5b6b80;
+    --heading: #0b4fb0; --strong: #0b4fb0; --em: #0b5fd9;
+    --accent: #0b5fd9; --link-hover: #084aa8;
+    --quote-bg: #e6f0fe; --quote-border: #7fb0f2; --quote-color: #33689f;
+    --inline-code-bg: #e2edff; --inline-code-color: #0b5fd9;
+    --hr: #d5e4f8; --marker: #0b5fd9; --heading-line: #cfe0f7; --heading-bar: #0b5fd9;
+    --table-border: #cfe0f7; --table-head-bg: #e8f1fe; --table-head-color: #0b4fb0;
+    --heading-font: "SF Pro Display", -apple-system, "PingFang SC", sans-serif;
+    --h1: 25px; --h2: 21px; --h3: 18px; --h4: 16px; --h5: 15px; --h6: 14px;
+    background: var(--article-bg); color: var(--text);
+  }
+  .article.theme-retro {
+    --article-bg: #fdf6ea; --text: #4a3b2a; --text-weak: #8a7457;
+    --heading: #b8501c; --strong: #8a4b18; --em: #b8501c;
+    --accent: #d9651f; --link-hover: #b34d12;
+    --quote-bg: #f6e8d2; --quote-border: #e0b57e; --quote-color: #8a6a42;
+    --inline-code-bg: #f3e4cc; --inline-code-color: #b8501c;
+    --hr: #e9d4b2; --marker: #d9651f; --heading-line: #e5cba0; --heading-bar: #d9651f;
+    --table-border: #e5cba0; --table-head-bg: #f7ecd9; --table-head-color: #8a4b18;
+    --heading-font: Georgia, "Songti SC", "STSong", "SimSun", serif;
+    --h1: 28px; --h2: 23px; --h3: 20px; --h4: 18px; --h5: 17px; --h6: 16px;
+    background: var(--article-bg); color: var(--text);
+  }
+
+  /* ============================================================
+     Markdown 编辑面板（模拟「外部传入 Markdown」）
+  ============================================================ */
+  .editor-panel {
+    position: fixed; top: 0; right: -440px; z-index: 60;
+    width: 420px; height: 100vh; display: flex; flex-direction: column;
+    background: rgba(16, 16, 28, 0.94);
+    border-left: 1px solid rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+    transition: right 0.35s ease;
+    box-shadow: -20px 0 60px rgba(0, 0, 0, 0.4);
+  }
+  .editor-panel.open { right: 0; }
+  .editor-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 18px; border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .editor-head b { font-size: 14px; }
+  .editor-head small { display: block; color: rgba(255, 255, 255, 0.45); font-weight: 400; font-size: 11px; margin-top: 3px; }
+  .editor-close { background: none; border: none; color: #fff; font-size: 16px; cursor: pointer; opacity: 0.7; }
+  .editor-close:hover { opacity: 1; }
+  .editor-panel textarea {
+    flex: 1; resize: none; outline: none; border: none;
+    background: #0b0b16; color: #e6e6f0;
+    padding: 18px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px; line-height: 1.65;
+  }
+
+  /* 提示浮层 */
+  .toast {
+    position: fixed; left: 50%; bottom: 30px; z-index: 80;
+    transform: translateX(-50%) translateY(16px);
+    background: rgba(22, 22, 40, 0.94);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    color: #fff; font-size: 13.5px;
+    padding: 12px 20px; border-radius: 14px;
+    box-shadow: 0 16px 44px rgba(0, 0, 0, 0.45);
+    opacity: 0; pointer-events: none; transition: opacity 0.3s ease, transform 0.3s ease;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .toast.err { border-color: rgba(255, 120, 120, 0.5); }
+
+  .footer-note { text-align: center; color: rgba(255, 255, 255, 0.4); font-size: 12px; padding: 0 16px 40px; }
+
+  @media (max-width: 720px) {
+    .editor-panel { width: 100%; right: -100%; }
+    .frame.mobile { width: min(392px, 94vw); }
+  }
+</style>
+</head>
+<body data-theme="classic">
+
+<div class="blobs"><span class="b1"></span><span class="b2"></span><span class="b3"></span></div>
+
+<header class="app-header">
+  <h1>wx-md · 微信公众号 Markdown 渲染组件</h1>
+  <p>高保真 UI 原型 —— 点击顶部图标按钮，体验主题切换 / 视图切换 / 一键复制</p>
+  <div class="status-chips">
+    <span class="chip">当前主题：<b id="chipTheme">简约白</b></span>
+    <span class="chip">当前视图：<b id="chipView">手机</b></span>
+    <span class="chip">复制产物：<b>全内联样式 · 兼容公众号</b></span>
+  </div>
+</header>
+
+<main class="stage">
+  <div class="frame mobile" id="frame">
+
+    <!-- 手机状态栏 -->
+    <div class="phone-status">
+      <span class="time">9:41</span>
+      <span class="notch"></span>
+      <span class="icons"><span>📶</span><span>🔋</span></span>
+    </div>
+
+    <div class="frame-body" id="frameBody">
+
+      <!-- 顶部设置区域：悬浮固定 · 居中 · 图标按钮 -->
+      <div class="settings-bar" id="settingsBar">
+        <button class="btn theme-btn" id="themeBtn" title="选择主题">
+          <span>🌈</span><span class="theme-label">选择主题</span><span class="theme-caret">▼</span>
+        </button>
+        <div class="theme-menu" id="themeMenu"></div>
+
+        <span class="divider"></span>
+        <button class="btn active" data-view="mobile" id="viewMobile" title="手机视图">📱</button>
+        <button class="btn" data-view="desktop" id="viewDesktop" title="桌面视图">💻</button>
+
+        <span class="divider"></span>
+        <button class="btn" id="copyBtn" title="一键复制（公众号格式）">📋</button>
+
+        <span class="divider"></span>
+        <button class="btn" id="editBtn" title="编辑 Markdown">✏️</button>
+      </div>
+
+      <!-- Markdown 实时预览 -->
+      <article class="article theme-classic" id="article"></article>
+    </div>
+  </div>
+</main>
+
+<!-- Markdown 编辑面板 -->
+<div class="editor-panel" id="editorPanel">
+  <div class="editor-head">
+    <div>
+      <b>Markdown 编辑器</b>
+      <small>模拟外部传入的 Markdown 文本 · 实时渲染</small>
+    </div>
+    <button class="editor-close" id="editorClose" title="关闭">✕</button>
+  </div>
+  <textarea id="editor" spellcheck="false"></textarea>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<p class="footer-note">原型说明：主题切换会整体改变标题（H1–H6）、引用、列表、强调、链接等样式；复制按钮生成全内联样式的 HTML，可直接粘贴到微信公众号编辑器。</p>
+
+<script>
+/* ============================================================
+   1. 主题注册表（顺序即展示顺序，第 1 个为默认）
+============================================================ */
+const THEMES = {
+  classic: { name: '简约白',  dot: '#ffffff' },
+  forest:  { name: '森林绿', dot: '#2e9e5b' },
+  dark:    { name: '微信暗黑', dot: '#12121f' },
+  tech:    { name: '科技蓝',  dot: '#0b5fd9' },
+  retro:   { name: '复古橙',  dot: '#d9651f' }
+};
+
+/* ============================================================
+   2. 示例 Markdown（外部传入内容）
+============================================================ */
+const SAMPLE_MD = [
+  '# 微信公众号排版，从这套 Markdown 开始',
+  '',
+  '一段**加粗强调**、一段*斜体强调*，还有 `行内代码` 与[超链接示例](https://mp.weixin.qq.com)。',
+  '',
+  '## 一、内容结构',
+  '',
+  '- 无序列表：支持 **嵌套加粗** 与 `code`',
+  '- 列表项带彩色圆点标记，随主题变化',
+  '',
+  '1. 有序列表第一项',
+  '2. 有序列表第二项',
+  '3. 有序列表第三项',
+  '',
+  '> 引用块：适合用于强调观点、标注金句，或作为「小编备注」使用。',
+  '',
+  '## 二、代码示例',
+  '',
+  '```js',
+  'function greet(name) {',
+  '  // say hello with template literal',
+  '  const msg = `Hello, ${name}!`;',
+  '  const count = 42;',
+  '  console.log(msg);',
+  '  return count;',
+  '}',
+  '```',
+  '',
+  '## 三、数据表格',
+  '',
+  '| 平台 | 内联样式 | 一键粘贴 |',
+  '| --- | --- | --- |',
+  '| 微信公众号 | 支持 | 支持 |',
+  '| 知乎 | 部分 | 不支持 |',
+  '| 掘金 | 支持 | 部分支持 |',
+  '',
+  '---',
+  '',
+  '### 小结',
+  '',
+  '切换左上角 **主题**，观察标题、引用、列表、链接与强调文字的联动变化；',
+  '切换 📱 / 💻 视图，体验手机与桌面布局；点击 📋 复制，产物为全内联样式，可直接粘贴进公众号编辑器。'
+].join('\n');
+
+/* ============================================================
+   3. 极简 Markdown 渲染（行内格式 + 块级解析 + 代码高亮）
+============================================================ */
+function escapeHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function inlineFormat(s) {
+  s = escapeHtml(s);
+  const codes = [];
+  s = s.replace(/`([^`]+)`/g, (m, c) => { codes.push('<code>' + c + '</code>'); return '\u0000' + (codes.length - 1) + '\u0000'; });
+  s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/\*([^*\s][^*]*)\*/g, '<em>$1</em>');
+  s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+  s = s.replace(/\u0000(\d+)\u0000/g, (m, i) => codes[+i]);
+  return s;
+}
+function highlight(code) {
+  const esc = escapeHtml(code);
+  return esc.replace(
+    /(\/\/.*)|("[^"]*")|('[^']*')|(`[^`]*`)|\b(function|const|let|var|return|if|else|for|while|class|new|import|from|export|default|async|await|typeof|in|of|null|undefined|true|false)\b|\b(\d+(?:\.\d+)?)\b|([A-Za-z_$][\w$]*)(?=\()/g,
+    (m, com, s1, s2, s3, kw, num, fn) => {
+      if (com) return '<span class="tk-com">' + com + '</span>';
+      if (s1 || s2 || s3) return '<span class="tk-str">' + m + '</span>';
+      if (kw) return '<span class="tk-kw">' + kw + '</span>';
+      if (num) return '<span class="tk-num">' + num + '</span>';
+      if (fn) return '<span class="tk-fn">' + fn + '</span>';
+      return m;
+    }
+  );
+}
+function codeBlock(code, lang) {
+  return '<pre class="codeblock">' +
+    '<div class="code-head"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>' +
+    '<span class="code-lang">' + (lang || 'code') + '</span></div>' +
+    '<code class="code-body">' + highlight(code) + '</code></pre>';
+}
+function splitRow(line) {
+  return line.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+}
+function renderMarkdown(md) {
+  const lines = md.split('\n');
+  let html = '', i = 0;
+  const closeLists = (inUl, inOl) => { if (inUl) html += '</ul>'; if (inOl) html += '</ol>'; };
+  let inUl = false, inOl = false;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // 代码围栏
+    const fence = line.match(/^```(\w*)/);
+    if (fence) {
+      const lang = fence[1]; i++;
+      const buf = [];
+      while (i < lines.length && !lines[i].startsWith('```')) { buf.push(lines[i]); i++; }
+      i++;
+      closeLists(inUl, inOl); inUl = inOl = false;
+      html += codeBlock(buf.join('\n'), lang);
+      continue;
+    }
+    // 标题
+    const h = line.match(/^(#{1,6})\s+(.*)/);
+    if (h) {
+      closeLists(inUl, inOl); inUl = inOl = false;
+      const lvl = h[1].length;
+      html += '<h' + lvl + '>' + inlineFormat(h[2]) + '</h' + lvl + '>';
+      i++; continue;
+    }
+    // 分割线
+    if (/^-{3,}$/.test(line.trim())) {
+      closeLists(inUl, inOl); inUl = inOl = false;
+      html += '<hr>';
+      i++; continue;
+    }
+    // 引用
+    if (/^>\s?/.test(line)) {
+      closeLists(inUl, inOl); inUl = inOl = false;
+      const buf = [];
+      while (i < lines.length && /^>\s?/.test(lines[i])) { buf.push(lines[i].replace(/^>\s?/, '')); i++; }
+      html += '<blockquote>' + buf.map(inlineFormat).join('<br>') + '</blockquote>';
+      continue;
+    }
+    // 表格
+    if (/^\|.*\|\s*$/.test(line) && /^\|[\s:|-]+\|\s*$/.test(lines[i + 1] || '')) {
+      closeLists(inUl, inOl); inUl = inOl = false;
+      const heads = splitRow(line); i += 2;
+      const rows = [];
+      while (i < lines.length && /^\|.*\|\s*$/.test(lines[i])) { rows.push(splitRow(lines[i])); i++; }
+      html += '<table><thead><tr>' + heads.map(x => '<th>' + inlineFormat(x) + '</th>').join('') + '</tr></thead><tbody>';
+      rows.forEach(r => { html += '<tr>' + r.map(x => '<td>' + inlineFormat(x) + '</td>').join('') + '</tr>'; });
+      html += '</tbody></table>';
+      continue;
+    }
+    // 无序列表
+    const ul = line.match(/^[-*+]\s+(.*)/);
+    if (ul) {
+      if (!inUl) { closeLists(inUl, inOl); html += '<ul>'; inUl = true; inOl = false; }
+      html += '<li>' + inlineFormat(ul[1]) + '</li>';
+      i++; continue;
+    }
+    // 有序列表
+    const ol = line.match(/^\d+\.\s+(.*)/);
+    if (ol) {
+      if (!inOl) { closeLists(inUl, inOl); html += '<ol>'; inOl = true; inUl = false; }
+      html += '<li>' + inlineFormat(ol[1]) + '</li>';
+      i++; continue;
+    }
+    // 空行：闭合列表
+    if (/^\s*$/.test(line)) { closeLists(inUl, inOl); inUl = inOl = false; i++; continue; }
+    // 段落
+    closeLists(inUl, inOl); inUl = inOl = false;
+    const buf = [];
+    while (i < lines.length && !/^\s*$/.test(lines[i]) && !/^[#>|`-]/.test(lines[i])) { buf.push(lines[i]); i++; }
+    html += '<p>' + buf.map(inlineFormat).join(' ') + '</p>';
+  }
+  closeLists(inUl, inOl);
+  return html;
+}
+
+/* ============================================================
+   4. 状态与交互
+============================================================ */
+const article = document.getElementById('article');
+const frame = document.getElementById('frame');
+let currentTheme = 'classic';
+let currentView = 'mobile';
+
+/* —— 主题下拉菜单 —— */
+const themeBtn = document.getElementById('themeBtn');
+const themeMenu = document.getElementById('themeMenu');
+function buildThemeMenu() {
+  themeMenu.innerHTML = '<div class="menu-title">选择主题 · 预览区整体样式随之变化</div>';
+  Object.keys(THEMES).forEach(key => {
+    const item = document.createElement('div');
+    item.className = 'menu-item' + (key === currentTheme ? ' current' : '');
+    item.dataset.theme = key;
+    item.innerHTML = '<span class="menu-dot" style="background:' + THEMES[key].dot + '"></span>' +
+      '<span>' + THEMES[key].name + '</span><span class="menu-check">✓</span>';
+    item.addEventListener('click', () => { setTheme(key); themeMenu.classList.remove('open'); themeBtn.classList.remove('open'); });
+    themeMenu.appendChild(item);
+  });
+}
+themeBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  themeMenu.classList.toggle('open');
+  themeBtn.classList.toggle('open');
+});
+document.addEventListener('click', () => { themeMenu.classList.remove('open'); themeBtn.classList.remove('open'); });
+themeMenu.addEventListener('click', (e) => e.stopPropagation());
+
+function setTheme(key) {
+  article.classList.remove('theme-' + currentTheme);
+  article.classList.add('theme-' + key);
+  document.body.dataset.theme = key;
+  currentTheme = key;
+  document.getElementById('chipTheme').textContent = THEMES[key].name;
+  buildThemeMenu();
+}
+
+/* —— 视图切换 —— */
+function setView(view) {
+  currentView = view;
+  frame.classList.toggle('mobile', view === 'mobile');
+  frame.classList.toggle('desktop', view === 'desktop');
+  document.getElementById('viewMobile').classList.toggle('active', view === 'mobile');
+  document.getElementById('viewDesktop').classList.toggle('active', view === 'desktop');
+  document.getElementById('chipView').textContent = view === 'mobile' ? '手机' : '桌面';
+}
+document.getElementById('viewMobile').addEventListener('click', () => setView('mobile'));
+document.getElementById('viewDesktop').addEventListener('click', () => setView('desktop'));
+
+/* —— 一键复制（生成全内联样式 HTML，兼容微信公众号） —— */
+const COPY_PROPS = [
+  'color', 'background-color', 'font-family', 'font-size', 'font-style', 'font-weight',
+  'line-height', 'letter-spacing', 'text-align', 'text-decoration', 'text-underline-offset',
+  'text-indent', 'text-transform', 'white-space',
+  'margin-top', 'margin-bottom', 'margin-left', 'margin-right',
+  'padding-top', 'padding-bottom', 'padding-left', 'padding-right',
+  'border-top-width', 'border-bottom-width', 'border-left-width', 'border-right-width',
+  'border-top-style', 'border-bottom-style', 'border-left-style', 'border-right-style',
+  'border-top-color', 'border-bottom-color', 'border-left-color', 'border-right-color',
+  'border-radius', 'display', 'width', 'max-width', 'vertical-align', 'list-style-type', 'overflow-x'
+];
+function inlineElement(el, includeRoot) {
+  const cs = getComputedStyle(el);
+  const style = COPY_PROPS
+    .map(p => p + ':' + cs.getPropertyValue(p))
+    .filter(s => !s.endsWith(':'))
+    .join(';');
+  if (includeRoot) el.setAttribute('style', style + ';');
+  else el.setAttribute('style', style + ';' + (el.getAttribute('style') || ''));
+}
+function buildCopyHtml() {
+  const clone = article.cloneNode(true);
+  clone.removeAttribute('id');
+  clone.querySelectorAll('*').forEach(n => inlineElement(n, false));
+  inlineElement(clone, true);
+  return '<section style="max-width:100%;box-sizing:border-box;">' + clone.outerHTML + '</section>';
+}
+function toast(msg, isErr) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.toggle('err', !!isErr);
+  t.classList.add('show');
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.remove('show'), 2600);
+}
+document.getElementById('copyBtn').addEventListener('click', async () => {
+  try {
+    const html = buildCopyHtml();
+    const plain = article.innerText;
+    if (navigator.clipboard && window.ClipboardItem) {
+      const item = new ClipboardItem({
+        'text/html': new Blob([html], { type: 'text/html' }),
+        'text/plain': new Blob([plain], { type: 'text/plain' })
+      });
+      await navigator.clipboard.write([item]);
+      toast('已复制 ✓ 全内联样式，可直接粘贴到公众号编辑器');
+    } else {
+      // 降级：隐藏 textarea + execCommand
+      const ta = document.createElement('textarea');
+      ta.value = html;
+      ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none;';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      ta.remove();
+      ok ? toast('已复制 ✓（降级模式）') : toast('复制失败，请手动复制', true);
+    }
+  } catch (err) {
+    toast('复制失败：' + err.message, true);
+  }
+});
+
+/* —— Markdown 编辑面板（模拟外部传入 + 实时渲染） —— */
+const editorPanel = document.getElementById('editorPanel');
+const editor = document.getElementById('editor');
+function toggleEditor(open) {
+  editorPanel.classList.toggle('open', open);
+  if (open) editor.focus();
+}
+document.getElementById('editBtn').addEventListener('click', () => toggleEditor(!editorPanel.classList.contains('open')));
+document.getElementById('editorClose').addEventListener('click', () => toggleEditor(false));
+editor.addEventListener('input', () => { article.innerHTML = renderMarkdown(editor.value); });
+
+/* —— 初始化 —— */
+editor.value = SAMPLE_MD;
+article.innerHTML = renderMarkdown(SAMPLE_MD);
+buildThemeMenu();
+</script>
+</body>
+</html>
